@@ -1,13 +1,14 @@
 ﻿# -*- coding: utf-8 -*-
 """
-gui/app_window.py - FlashCraft 现代暗黑美学主界面
+gui/app_window.py - FlashCraft 现代暗黑美学主界面 (升级版)
 作者: Emiliamio <mio2110767128@163.com>
 
-基于 CustomTkinter 打造的大厂高质感暗黑界面：
-- 顶部 Header：Logo、品牌标题、运行状态 Badge 与商业试用模式指示牌；
-- 输入控制区：文件/目录选择器、业务参数勾选卡片；
-- 实时日志终端：滚动控制台，支持时间戳、彩色级别区分、清空与日志一键导出；
-- 底部行动栏：平滑百分比进度条、【开始执行】、【强行停止】与【打开输出目录】。
+升级亮点：
+1. 智能屏幕居中计算 (自适应多分辨率屏幕)；
+2. 原生 Windows 拖拽支持 (直接把文件/目录拖入窗口任意区域)；
+3. 一键复制日志到剪贴板，方便售后微信沟通；
+4. 任务完成播放系统原生清脆提示音 (winsound)；
+5. 削峰队列防假死与商业试用保护锁。
 """
 
 import os
@@ -35,9 +36,9 @@ class AppWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # 1. 窗口基础规格
+        # 1. 窗口规格与智能屏幕居中
         self.title(f"{APP_NAME} {APP_VERSION}")
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self._center_window()
         self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.configure(fg_color=COLOR_BG_DARK)
         
@@ -56,8 +57,44 @@ class AppWindow(ctk.CTk):
         # 2. 构建界面组件
         self._setup_layout()
 
-        # 3. 启动后台 UI 队列消费者 (每 50ms 轮询一次)
+        # 3. 挂载 Windows 原生文件/目录拖拽钩子 (Drag & Drop)
+        self._setup_drag_and_drop()
+
+        # 4. 启动后台 UI 队列消费者 (每 50ms 轮询一次)
         self.after(50, self._poll_ui_queue)
+
+    def _center_window(self):
+        """让窗口在屏幕正中央优雅弹出"""
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = max(0, (sw - WINDOW_WIDTH) // 2)
+        y = max(0, (sh - WINDOW_HEIGHT) // 2)
+        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{x}+{y}")
+
+    def _setup_drag_and_drop(self):
+        """通过 windnd 挂载原生拖拽监听"""
+        try:
+            import windnd
+            def on_drop_files(files):
+                if files:
+                    first = files[0]
+                    if isinstance(first, bytes):
+                        # Windows 拖拽编码自适应
+                        for enc in ("utf-8", "gbk", "cp936"):
+                            try:
+                                first = first.decode(enc)
+                                break
+                            except Exception:
+                                pass
+                    path_str = str(first)
+                    self.path_entry.delete(0, "end")
+                    self.path_entry.insert(0, path_str)
+                    self._append_console_log(f"已通过拖拽快捷载入目标路径: {path_str}", "INFO")
+
+            windnd.hook_dropfiles(self, func=on_drop_files)
+        except Exception:
+            pass
 
     def _setup_layout(self):
         """网格布局规划"""
@@ -67,7 +104,7 @@ class AppWindow(ctk.CTk):
         # 1. 顶部 Header
         self._build_header(row=0)
 
-        # 2. 参数与文件选择卡片
+        # 2. 参数与文件选择卡片 (支持拖拽提示)
         self._build_config_card(row=1)
 
         # 3. 实时终端控制台
@@ -144,7 +181,7 @@ class AppWindow(ctk.CTk):
 
         self.path_entry = ctk.CTkEntry(
             config_frame,
-            placeholder_text="留空则自动加载内置仿真数据进行演示；或点击右侧按钮选择文件/文件夹...",
+            placeholder_text="支持将表格/文件夹直接拖拽入本窗口；或点击右侧选择；留空则运行内置仿真数据...",
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             fg_color="#161822",
             border_color="#334155"
@@ -156,8 +193,8 @@ class AppWindow(ctk.CTk):
 
         btn_file = ctk.CTkButton(
             btn_box, 
-            text="选择单个表格", 
-            width=90, 
+            text="选择表格", 
+            width=80, 
             height=28,
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             command=self._on_choose_file
@@ -166,8 +203,8 @@ class AppWindow(ctk.CTk):
 
         btn_dir = ctk.CTkButton(
             btn_box, 
-            text="选择批量目录", 
-            width=90, 
+            text="选择目录", 
+            width=80, 
             height=28,
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             command=self._on_choose_dir
@@ -224,17 +261,30 @@ class AppWindow(ctk.CTk):
         )
         con_title.grid(row=0, column=0, sticky="w")
 
+        # 复制日志按钮
+        btn_copy = ctk.CTkButton(
+            bar,
+            text="📋 复制日志",
+            width=70,
+            height=22,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=10),
+            fg_color="#334155",
+            hover_color="#475569",
+            command=self._copy_console_log
+        )
+        btn_copy.grid(row=0, column=1, padx=(0, 5))
+
         btn_clear = ctk.CTkButton(
             bar, 
             text="清屏", 
-            width=50, 
+            width=45, 
             height=22, 
             font=ctk.CTkFont(family="Microsoft YaHei", size=10),
             fg_color="#334155",
             hover_color="#475569",
             command=self._clear_console
         )
-        btn_clear.grid(row=0, column=1, padx=(0, 5))
+        btn_clear.grid(row=0, column=2, padx=(0, 5))
 
         btn_open_out = ctk.CTkButton(
             bar, 
@@ -246,7 +296,7 @@ class AppWindow(ctk.CTk):
             hover_color="#475569",
             command=self._open_output_dir
         )
-        btn_open_out.grid(row=0, column=2)
+        btn_open_out.grid(row=0, column=3)
 
         # 滚动多行文本框 (Console Box)
         self.console_text = ctk.CTkTextbox(
@@ -261,7 +311,8 @@ class AppWindow(ctk.CTk):
         self.console_text.configure(state="disabled")
 
         # 打印欢迎语
-        self._append_console_log(f"FlashCraft 桌面自动化工作台已就绪。当前运行环境: Python {sys.version.split()[0]}", "INFO")
+        self._append_console_log(f"FlashCraft 桌面自动化工作台已就绪。运行环境: Python {sys.version.split()[0]}", "INFO")
+        self._append_console_log("【支持拖拽】您可以直接将电脑中的表格或文件夹拖入本窗口任意区域。", "INFO")
         if self._is_trial_active:
             self._append_console_log(f"【商业安全锁开启】当前为客户试用体验模式，处理结果将限制前 {TRIAL_ROW_LIMIT} 行。", "WARN")
 
@@ -339,6 +390,19 @@ class AppWindow(ctk.CTk):
             self.path_entry.delete(0, "end")
             self.path_entry.insert(0, dir_path)
 
+    def _copy_console_log(self):
+        """一键复制控制台日志到剪贴板"""
+        logs = self.console_text.get("1.0", "end-1c")
+        if logs.strip():
+            self.clipboard_clear()
+            self.clipboard_append(logs)
+            old_text = self.status_badge.cget("text")
+            old_fg = self.status_badge.cget("fg_color")
+            old_color = self.status_badge.cget("text_color")
+            
+            self.status_badge.configure(text="📋 日志已复制", fg_color="#1E293B", text_color=COLOR_ACCENT_GREEN)
+            self.after(2000, lambda: self.status_badge.configure(text=old_text, fg_color=old_fg, text_color=old_color))
+
     def _clear_console(self):
         self.console_text.configure(state="normal")
         self.console_text.delete("1.0", "end")
@@ -351,6 +415,15 @@ class AppWindow(ctk.CTk):
             os.startfile(self.output_dir)
         except Exception as e:
             messagebox.showwarning("打开失败", f"无法打开输出目录: {e}")
+
+    def _play_beep(self):
+        """任务完成播放 Windows 原生清脆提示音"""
+        if sys.platform == "win32":
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
 
     def _append_console_log(self, text: str, level: str = "INFO"):
         t_str = datetime.now().strftime("%H:%M:%S")
@@ -410,6 +483,7 @@ class AppWindow(ctk.CTk):
                     self.status_badge.configure(text="✔ 已完成", fg_color="#064E3B", text_color=COLOR_ACCENT_GREEN)
                     self.btn_run.configure(state="normal", text="🚀 开始执行任务")
                     self.btn_stop.configure(state="disabled", text="🛑 强行停止")
+                    self._play_beep() # 播放完成音效
                 elif status == "ERROR":
                     self.status_badge.configure(text="✖ 异常中断", fg_color="#7F1D1D", text_color=COLOR_ACCENT_RED)
                     self.btn_run.configure(state="normal", text="🚀 开始执行任务")
