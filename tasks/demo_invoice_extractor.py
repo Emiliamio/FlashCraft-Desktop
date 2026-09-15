@@ -21,7 +21,7 @@ import pandas as pd
 import pdfplumber
 
 from core.base_worker import BaseWorker
-from config import IS_TRIAL, TRIAL_ROW_LIMIT, TRIAL_WATERMARK, get_default_output_dir
+from config import IS_TRIAL, TRIAL_ROW_LIMIT, TRIAL_WATERMARK, get_default_output_dir, resolve_mock_path
 
 class InvoiceExtractorWorker(BaseWorker):
     def __init__(self, params: Dict[str, Any]):
@@ -87,14 +87,20 @@ class InvoiceExtractorWorker(BaseWorker):
     def execute(self) -> Dict[str, Any]:
         input_path = self.params.get("input_path", "").strip()
         
-        # 若未提供路径，默认进入 mock_data/invoices 靶场演示
+        # 若未提供路径，自适应多级寻址与自愈定位
         if not input_path or not os.path.exists(input_path):
-            mock_invoices_dir = Path("mock_data/invoices")
-            if mock_invoices_dir.exists():
+            mock_invoices_dir = resolve_mock_path("mock_data/invoices")
+            if mock_invoices_dir.exists() and list(mock_invoices_dir.glob("*.pdf")):
                 input_path = str(mock_invoices_dir)
                 self.emit_log(f"未指定发票目录，已自动切换至全真财务靶场: {input_path}", level="INFO")
             else:
-                raise FileNotFoundError("未选择发票文件且未找到 mock_data/invoices 靶场数据。")
+                self.emit_log("靶场发票未检索到，正在即时动态生成 15 份全真仿真发票...", level="INFO")
+                try:
+                    from mock_data.generate_invoices import main as gen_inv_main
+                    gen_inv_main()
+                    input_path = str(resolve_mock_path("mock_data/invoices"))
+                except Exception as gen_err:
+                    raise FileNotFoundError(f"未选择发票文件且未能定位靶场数据: {gen_err}")
 
         p = Path(input_path)
         pdf_files: List[Path] = []

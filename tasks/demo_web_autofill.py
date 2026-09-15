@@ -20,7 +20,7 @@ from typing import Dict, Any
 import pandas as pd
 
 from core.base_worker import BaseWorker
-from config import IS_TRIAL, TRIAL_ROW_LIMIT, get_default_output_dir
+from config import IS_TRIAL, TRIAL_ROW_LIMIT, get_default_output_dir, resolve_mock_path
 
 class WebAutofillWorker(BaseWorker):
     def __init__(self, params: Dict[str, Any]):
@@ -31,19 +31,27 @@ class WebAutofillWorker(BaseWorker):
         target_url = self.params.get("target_url", "").strip()
         headless = self.params.get("headless", False) # 默认开启有头浏览器以便录屏演示
 
-        # 1. 默认数据源与目标靶场回退
+        # 1. 默认数据源与目标靶场多级自愈寻址
         if not input_excel or not os.path.exists(input_excel):
-            mock_excel = Path("mock_data/学员资料待录入花名册.xlsx")
+            mock_excel = resolve_mock_path("mock_data/学员资料待录入花名册.xlsx")
             if mock_excel.exists():
                 input_excel = str(mock_excel)
                 self.emit_log(f"未指定名单表格，自动载入全真教培学员靶场名单: {input_excel}", level="INFO")
             else:
-                raise FileNotFoundError("未提供待录入 Excel 表格。")
+                try:
+                    from mock_data.generate_students import generate_students
+                    generate_students()
+                    input_excel = str(resolve_mock_path("mock_data/学员资料待录入花名册.xlsx"))
+                except Exception as gen_err:
+                    raise FileNotFoundError(f"未提供待录入名单且未能定位靶场表格: {gen_err}")
 
         if not target_url:
-            portal_html = Path("mock_data/portal/mock_portal.html").resolve()
-            target_url = portal_html.as_uri()
-            self.emit_log(f"未指定上报网址，自动载入离线政企上报系统: {target_url}", level="INFO")
+            portal_html = resolve_mock_path("mock_data/portal/mock_portal.html").resolve()
+            if portal_html.exists():
+                target_url = portal_html.as_uri()
+                self.emit_log(f"未指定上报网址，自动载入离线政企上报系统: {target_url}", level="INFO")
+            else:
+                raise FileNotFoundError(f"未找到离线政企申报门户 HTML: {portal_html}")
 
         # 2. 读取名单
         self.emit_log(f"正在加载待上报数据表格: {os.path.basename(input_excel)} ...", level="INFO")

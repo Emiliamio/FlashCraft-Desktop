@@ -60,6 +60,24 @@ def get_resource_path(relative_path: str) -> str:
         base_path = os.path.abspath(os.path.dirname(__file__))
     return os.path.normpath(os.path.join(base_path, relative_path))
 
+def resolve_mock_path(sub_path: str) -> Path:
+    """
+    智能解析全真靶场路径（支持 PyInstaller _MEIPASS 打包内嵌目录、exe 所在同级、父级工程目录多级自愈寻址）
+    """
+    # 1. 尝试 PyInstaller 单文件打包解压目录 (_MEIPASS)
+    if hasattr(sys, '_MEIPASS'):
+        p = Path(sys._MEIPASS) / sub_path
+        if p.exists():
+            return p
+
+    # 2. 尝试当前源码所在根目录与调用层级
+    root_dir = Path(os.path.abspath(os.path.dirname(__file__)))
+    for base in [root_dir, root_dir.parent, Path.cwd(), Path.cwd().parent]:
+        p = base / sub_path
+        if p.exists():
+            return p
+
+    return root_dir / sub_path
 def get_default_output_dir() -> str:
     """
     获取默认输出目录：优先定位用户桌面上的 'FlashCraft_输出成果' 目录。

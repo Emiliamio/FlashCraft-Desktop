@@ -19,7 +19,7 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 
 from core.base_worker import BaseWorker
-from config import IS_TRIAL, TRIAL_ROW_LIMIT, TRIAL_WATERMARK, get_default_output_dir
+from config import IS_TRIAL, TRIAL_ROW_LIMIT, TRIAL_WATERMARK, get_default_output_dir, resolve_mock_path
 
 # 跨平台列名模糊对齐字典
 SCHEMA_MAPPINGS = {
@@ -63,14 +63,20 @@ class ExcelMergerWorker(BaseWorker):
         input_path = self.params.get("input_path", "").strip()
         remove_duplicates = self.params.get("remove_duplicates", True)
         
-        # 默认靶场数据引导
+        # 默认靶场数据自适应多级寻址
         if not input_path or not os.path.exists(input_path):
-            mock_dir = Path("mock_data/excel_bills")
-            if mock_dir.exists():
+            mock_dir = resolve_mock_path("mock_data/excel_bills")
+            if mock_dir.exists() and (list(mock_dir.glob("*.xlsx")) or list(mock_dir.glob("*.csv"))):
                 input_path = str(mock_dir)
                 self.emit_log(f"未指定输入源，已自动切入电商多店铺全真靶场: {input_path}", level="INFO")
             else:
-                raise FileNotFoundError("未选定输入表格且未找到 mock_data/excel_bills 靶场数据。")
+                self.emit_log("靶场电商表格未检索到，正在即时生成测试账单...", level="INFO")
+                try:
+                    from mock_data.generate_bills import generate_bills
+                    generate_bills()
+                    input_path = str(resolve_mock_path("mock_data/excel_bills"))
+                except Exception as gen_err:
+                    raise FileNotFoundError(f"未选定输入表格且未能定位靶场数据: {gen_err}")
 
         p = Path(input_path)
         files: List[Path] = []

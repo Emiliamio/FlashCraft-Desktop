@@ -46,6 +46,7 @@ def build():
         "--noconsole",
         "--name=FlashCraft_桌面自动化工作台",
         f"--add-data=assets{os.pathsep}assets",
+        f"--add-data=mock_data{os.pathsep}mock_data",
         "--collect-all=customtkinter",
         "--collect-all=windnd",
     ] + icon_arg + version_arg + [
