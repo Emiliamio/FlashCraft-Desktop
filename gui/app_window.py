@@ -1,14 +1,12 @@
 ﻿# -*- coding: utf-8 -*-
 """
-gui/app_window.py - FlashCraft 现代暗黑美学主界面 (升级版)
+gui/app_window.py - FlashCraft 现代暗黑美学主界面 (3合1多场景商业工作台)
 作者: Emiliamio <mio2110767128@163.com>
 
-升级亮点：
-1. 智能屏幕居中计算 (自适应多分辨率屏幕)；
-2. 原生 Windows 拖拽支持 (直接把文件/目录拖入窗口任意区域)；
-3. 一键复制日志到剪贴板，方便售后微信沟通；
-4. 任务完成播放系统原生清脆提示音 (winsound)；
-5. 削峰队列防假死与商业试用保护锁。
+三大吸金业务场景一键切换：
+1. 📑 财务神器：电子发票 PDF 批量提取与查重汇总
+2. 📊 电商神器：多店铺 Excel 账单核对与利润分析
+3. 🌐 政企神器：Excel 数据自动批量填表与上报 (驱动系统 Edge)
 """
 
 import os
@@ -31,6 +29,15 @@ from config import (
 )
 from gui.ui_queue import global_ui_queue, MessageType
 from tasks.demo_excel_merger import ExcelMergerWorker
+from tasks.demo_invoice_extractor import InvoiceExtractorWorker
+from tasks.demo_web_autofill import WebAutofillWorker
+
+# 场景定义
+TASK_MODES = [
+    "📑 财务神器：电子发票PDF批量提取与查重汇总",
+    "📊 电商神器：多店铺Excel账单核对与利润分析",
+    "🌐 政企神器：Excel数据自动批量填表与上报"
+]
 
 class AppWindow(ctk.CTk):
     def __init__(self):
@@ -50,7 +57,7 @@ class AppWindow(ctk.CTk):
                 pass
 
         # 状态管理
-        self.current_worker: ExcelMergerWorker = None
+        self.current_worker = None
         self.output_dir = get_default_output_dir()
         self._is_trial_active = IS_TRIAL
 
@@ -80,7 +87,6 @@ class AppWindow(ctk.CTk):
                 if files:
                     first = files[0]
                     if isinstance(first, bytes):
-                        # Windows 拖拽编码自适应
                         for enc in ("utf-8", "gbk", "cp936"):
                             try:
                                 first = first.decode(enc)
@@ -104,7 +110,7 @@ class AppWindow(ctk.CTk):
         # 1. 顶部 Header
         self._build_header(row=0)
 
-        # 2. 参数与文件选择卡片 (支持拖拽提示)
+        # 2. 参数与业务卡片
         self._build_config_card(row=1)
 
         # 3. 实时终端控制台
@@ -115,12 +121,12 @@ class AppWindow(ctk.CTk):
 
     def _build_header(self, row: int):
         header_frame = ctk.CTkFrame(self, fg_color=COLOR_CARD_DARK, corner_radius=12, border_width=1, border_color=COLOR_CARD_BORDER)
-        header_frame.grid(row=row, column=0, padx=20, pady=(15, 10), sticky="ew")
+        header_frame.grid(row=row, column=0, padx=20, pady=(15, 8), sticky="ew")
         header_frame.grid_columnconfigure(1, weight=1)
 
         # 标题与副标题区
         title_box = ctk.CTkFrame(header_frame, fg_color="transparent")
-        title_box.grid(row=0, column=0, padx=20, pady=12, sticky="w")
+        title_box.grid(row=0, column=0, padx=20, pady=10, sticky="w")
 
         title_label = ctk.CTkLabel(
             title_box, 
@@ -140,10 +146,9 @@ class AppWindow(ctk.CTk):
 
         # 状态指示徽章区
         badge_box = ctk.CTkFrame(header_frame, fg_color="transparent")
-        badge_box.grid(row=0, column=2, padx=20, pady=12, sticky="e")
+        badge_box.grid(row=0, column=2, padx=20, pady=10, sticky="e")
 
-        # 商业试用模式指示牌
-        trial_text = f"🛡️ 试用保护锁 (限{TRIAL_ROW_LIMIT}行)" if self._is_trial_active else "⭐ 商业正式版"
+        trial_text = f"🛡️ 试用保护锁 (限{TRIAL_ROW_LIMIT}条)" if self._is_trial_active else "⭐ 商业正式版"
         trial_color = COLOR_ACCENT_AMBER if self._is_trial_active else COLOR_ACCENT_GREEN
         self.trial_badge = ctk.CTkLabel(
             badge_box,
@@ -157,7 +162,6 @@ class AppWindow(ctk.CTk):
         )
         self.trial_badge.pack(side="left", padx=(0, 10))
 
-        # 运行状态指示器
         self.status_badge = ctk.CTkLabel(
             badge_box,
             text="● 待机就绪",
@@ -175,26 +179,42 @@ class AppWindow(ctk.CTk):
         config_frame.grid(row=row, column=0, padx=20, pady=5, sticky="ew")
         config_frame.grid_columnconfigure(1, weight=1)
 
-        # 1. 路径选择行
+        # 1. 业务场景切换下拉框
+        mode_label = ctk.CTkLabel(config_frame, text="业务场景选择:", font=ctk.CTkFont(family="Microsoft YaHei", size=12, weight="bold"), text_color="#E2E8F0")
+        mode_label.grid(row=0, column=0, padx=(15, 10), pady=(10, 5), sticky="w")
+
+        self.mode_menu = ctk.CTkOptionMenu(
+            config_frame,
+            values=TASK_MODES,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=11, weight="bold"),
+            dropdown_font=ctk.CTkFont(family="Microsoft YaHei", size=11),
+            fg_color="#0284C7",
+            button_color="#0369A1",
+            width=380,
+            command=self._on_change_mode
+        )
+        self.mode_menu.grid(row=0, column=1, columnspan=2, padx=(0, 15), pady=(10, 5), sticky="w")
+
+        # 2. 输入源选择行
         path_label = ctk.CTkLabel(config_frame, text="数据输入源:", font=ctk.CTkFont(family="Microsoft YaHei", size=12, weight="bold"), text_color="#E2E8F0")
-        path_label.grid(row=0, column=0, padx=(15, 10), pady=12, sticky="w")
+        path_label.grid(row=1, column=0, padx=(15, 10), pady=8, sticky="w")
 
         self.path_entry = ctk.CTkEntry(
             config_frame,
-            placeholder_text="支持将表格/文件夹直接拖拽入本窗口；或点击右侧选择；留空则运行内置仿真数据...",
+            placeholder_text="留空则自动加载该场景对应的内置全真靶场数据；也可直接拖入文件或点击右侧选择...",
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             fg_color="#161822",
             border_color="#334155"
         )
-        self.path_entry.grid(row=0, column=1, padx=(0, 10), pady=12, sticky="ew")
+        self.path_entry.grid(row=1, column=1, padx=(0, 10), pady=8, sticky="ew")
 
         btn_box = ctk.CTkFrame(config_frame, fg_color="transparent")
-        btn_box.grid(row=0, column=2, padx=(0, 15), pady=12, sticky="e")
+        btn_box.grid(row=1, column=2, padx=(0, 15), pady=8, sticky="e")
 
         btn_file = ctk.CTkButton(
             btn_box, 
-            text="选择表格", 
-            width=80, 
+            text="选择文件", 
+            width=75, 
             height=28,
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             command=self._on_choose_file
@@ -204,34 +224,25 @@ class AppWindow(ctk.CTk):
         btn_dir = ctk.CTkButton(
             btn_box, 
             text="选择目录", 
-            width=80, 
+            width=75, 
             height=28,
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             command=self._on_choose_dir
         )
         btn_dir.pack(side="left")
 
-        # 2. 业务参数开关行
+        # 3. 业务参数开关行
         opt_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
-        opt_frame.grid(row=1, column=0, columnspan=3, padx=15, pady=(0, 12), sticky="ew")
+        opt_frame.grid(row=2, column=0, columnspan=3, padx=15, pady=(2, 10), sticky="ew")
 
         self.chk_dedup = ctk.CTkCheckBox(
             opt_frame, 
-            text="自动去重 (按订单/唯一号)", 
+            text="自动查重/去重 (唯一号识别)", 
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             text_color="#CBD5E1"
         )
         self.chk_dedup.select()
         self.chk_dedup.pack(side="left", padx=(0, 20))
-
-        self.chk_clean_spaces = ctk.CTkCheckBox(
-            opt_frame, 
-            text="自动剥离字段首尾空格与乱码字符", 
-            font=ctk.CTkFont(family="Microsoft YaHei", size=11),
-            text_color="#CBD5E1"
-        )
-        self.chk_clean_spaces.select()
-        self.chk_clean_spaces.pack(side="left", padx=(0, 20))
 
         self.chk_auto_open = ctk.CTkCheckBox(
             opt_frame, 
@@ -248,20 +259,19 @@ class AppWindow(ctk.CTk):
         console_frame.grid_columnconfigure(0, weight=1)
         console_frame.grid_rowconfigure(1, weight=1)
 
-        # 终端卡片顶部工具栏
+        # 终端顶部工具栏
         bar = ctk.CTkFrame(console_frame, fg_color="transparent")
         bar.grid(row=0, column=0, padx=15, pady=(8, 4), sticky="ew")
         bar.grid_columnconfigure(0, weight=1)
 
         con_title = ctk.CTkLabel(
             bar, 
-            text="💻 业务处理实时控制台 (Live Execution Console)", 
+            text="💻 实时执行控制台 (Live Execution Console)", 
             font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
             text_color="#94A3B8"
         )
         con_title.grid(row=0, column=0, sticky="w")
 
-        # 复制日志按钮
         btn_copy = ctk.CTkButton(
             bar,
             text="📋 复制日志",
@@ -298,7 +308,7 @@ class AppWindow(ctk.CTk):
         )
         btn_open_out.grid(row=0, column=3)
 
-        # 滚动多行文本框 (Console Box)
+        # 滚动多行文本框
         self.console_text = ctk.CTkTextbox(
             console_frame,
             fg_color=COLOR_CONSOLE_BG,
@@ -307,21 +317,21 @@ class AppWindow(ctk.CTk):
             corner_radius=8,
             wrap="word"
         )
-        self.console_text.grid(row=1, column=0, padx=15, pady=(0, 12), sticky="nsew")
+        self.console_text.grid(row=1, column=0, padx=15, pady=(0, 10), sticky="nsew")
         self.console_text.configure(state="disabled")
 
-        # 打印欢迎语
+        # 欢迎语
         self._append_console_log(f"FlashCraft 桌面自动化工作台已就绪。运行环境: Python {sys.version.split()[0]}", "INFO")
-        self._append_console_log("【支持拖拽】您可以直接将电脑中的表格或文件夹拖入本窗口任意区域。", "INFO")
+        self._append_console_log("【三合一工作台】支持发票批量提取、电商跨店对账与网页系统批量填报，可在上方下拉切换。", "INFO")
         if self._is_trial_active:
-            self._append_console_log(f"【商业安全锁开启】当前为客户试用体验模式，处理结果将限制前 {TRIAL_ROW_LIMIT} 行。", "WARN")
+            self._append_console_log(f"【商业安全锁开启】当前为客户试用体验模式，处理结果将限制前 {TRIAL_ROW_LIMIT} 条/张。", "WARN")
 
     def _build_action_bar(self, row: int):
         action_frame = ctk.CTkFrame(self, fg_color=COLOR_CARD_DARK, corner_radius=12, border_width=1, border_color=COLOR_CARD_BORDER)
         action_frame.grid(row=row, column=0, padx=20, pady=(5, 15), sticky="ew")
         action_frame.grid_columnconfigure(0, weight=1)
 
-        # 1. 进度条与数字百分比
+        # 1. 进度条
         progress_box = ctk.CTkFrame(action_frame, fg_color="transparent")
         progress_box.grid(row=0, column=0, columnspan=2, padx=20, pady=(10, 5), sticky="ew")
         progress_box.grid_columnconfigure(0, weight=1)
@@ -375,23 +385,28 @@ class AppWindow(ctk.CTk):
     # ==========================================================================
     # 交互回调处理
     # ==========================================================================
+    def _on_change_mode(self, choice: str):
+        self._append_console_log(f"已切换当前业务模式至: {choice}", "INFO")
+
     def _on_choose_file(self):
-        file_path = filedialog.askopenfilename(
-            title="选择要处理的表格数据文件",
-            filetypes=[("Excel/CSV 表格", "*.xlsx *.xls *.csv"), ("所有文件", "*.*")]
-        )
+        mode = self.mode_menu.get()
+        if "发票" in mode:
+            ftypes = [("PDF 发票文件", "*.pdf"), ("所有文件", "*.*")]
+        else:
+            ftypes = [("Excel/CSV 表格", "*.xlsx *.xls *.csv"), ("所有文件", "*.*")]
+            
+        file_path = filedialog.askopenfilename(title="选择待处理的文件", filetypes=ftypes)
         if file_path:
             self.path_entry.delete(0, "end")
             self.path_entry.insert(0, file_path)
 
     def _on_choose_dir(self):
-        dir_path = filedialog.askdirectory(title="选择包含待处理表格的文件夹")
+        dir_path = filedialog.askdirectory(title="选择包含待处理文件的目录")
         if dir_path:
             self.path_entry.delete(0, "end")
             self.path_entry.insert(0, dir_path)
 
     def _copy_console_log(self):
-        """一键复制控制台日志到剪贴板"""
         logs = self.console_text.get("1.0", "end-1c")
         if logs.strip():
             self.clipboard_clear()
@@ -417,7 +432,6 @@ class AppWindow(ctk.CTk):
             messagebox.showwarning("打开失败", f"无法打开输出目录: {e}")
 
     def _play_beep(self):
-        """任务完成播放 Windows 原生清脆提示音"""
         if sys.platform == "win32":
             try:
                 import winsound
@@ -435,34 +449,38 @@ class AppWindow(ctk.CTk):
         self.console_text.configure(state="disabled")
 
     def _on_start_task(self):
-        """点击开始任务：启动守护线程，更新界面状态"""
         if self.current_worker and self.current_worker.is_running:
             return
 
+        mode = self.mode_menu.get()
         input_path = self.path_entry.get().strip()
         params = {
             "input_path": input_path,
             "remove_duplicates": bool(self.chk_dedup.get()),
-            "clean_spaces": bool(self.chk_clean_spaces.get())
+            "headless": False
         }
 
-        # 更新按钮状态
+        # 派发具体 Worker
+        if "发票" in mode:
+            self.current_worker = InvoiceExtractorWorker(params=params)
+        elif "电商" in mode or "账单" in mode:
+            self.current_worker = ExcelMergerWorker(params=params)
+        elif "填表" in mode or "上报" in mode:
+            self.current_worker = WebAutofillWorker(params=params)
+        else:
+            self.current_worker = ExcelMergerWorker(params=params)
+
         self.btn_run.configure(state="disabled", text="⚡ 正在运行中...")
         self.btn_stop.configure(state="normal")
         self.status_badge.configure(text="● 运行中...", fg_color="#1E3A8A", text_color="#60A5FA")
-
-        # 创建并启动独立 Worker 线程（杜绝界面假死无响应）
-        self.current_worker = ExcelMergerWorker(params=params)
         self.current_worker.start()
 
     def _on_stop_task(self):
-        """用户点击强行停止"""
         if self.current_worker and self.current_worker.is_running:
             self.current_worker.request_stop()
             self.btn_stop.configure(state="disabled", text="正在中止...")
 
     def _poll_ui_queue(self):
-        """消费后台 Worker 产生的 UI 消息流 (削峰填谷，彻底免疫闪退)"""
         messages = global_ui_queue.get_messages(batch_limit=50)
         for msg in messages:
             if msg.msg_type == MessageType.LOG:
@@ -483,7 +501,7 @@ class AppWindow(ctk.CTk):
                     self.status_badge.configure(text="✔ 已完成", fg_color="#064E3B", text_color=COLOR_ACCENT_GREEN)
                     self.btn_run.configure(state="normal", text="🚀 开始执行任务")
                     self.btn_stop.configure(state="disabled", text="🛑 强行停止")
-                    self._play_beep() # 播放完成音效
+                    self._play_beep()
                 elif status == "ERROR":
                     self.status_badge.configure(text="✖ 异常中断", fg_color="#7F1D1D", text_color=COLOR_ACCENT_RED)
                     self.btn_run.configure(state="normal", text="🚀 开始执行任务")
@@ -501,9 +519,7 @@ class AppWindow(ctk.CTk):
                     messagebox.showinfo(title, message)
 
             elif msg.msg_type == MessageType.TASK_DONE:
-                summary = msg.data
                 if self.chk_auto_open.get():
                     self._open_output_dir()
 
-        # 持续循环监听
         self.after(50, self._poll_ui_queue)

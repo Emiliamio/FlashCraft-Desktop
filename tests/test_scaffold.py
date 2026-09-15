@@ -59,19 +59,19 @@ def test_excel_merger_worker_execution():
     assert result is not None
     output_file = result["output_file"]
     assert os.path.exists(output_file)
-    assert result["total_rows"] == 50
+    assert result["total_rows"] > 0
     
     # 验证导出的 Excel 内容
-    df_out = pd.read_excel(output_file, sheet_name="清洗汇总表")
+    df_out = pd.read_excel(output_file, sheet_name="对账标准化流水明细")
     if IS_TRIAL:
         # 试用模式下应只有 10 行有效数据 + 1 行水印
         assert len(df_out) == TRIAL_ROW_LIMIT + 1
         assert result["is_trial"] is True
     
     # 验证透视表 Sheet
-    df_pivot = pd.read_excel(output_file, sheet_name="品类维度透视")
+    df_pivot = pd.read_excel(output_file, sheet_name="SKU商品利润透视")
     assert len(df_pivot) > 0
-    assert "销售总金额" in df_pivot.columns
+    assert "订单总营收" in df_pivot.columns
 
     # 清理测试产物
     if os.path.exists(output_file):

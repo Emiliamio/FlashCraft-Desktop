@@ -1,0 +1,144 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>华盛云端政企培训管理系统 - 学员资料批量申报中心</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif; }
+        body { background-color: #0F172A; color: #E2E8F0; padding: 30px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1E293B; padding-bottom: 20px; margin-bottom: 25px; }
+        .header h1 { font-size: 22px; color: #38BDF8; font-weight: 700; }
+        .badge { background: #064E3B; color: #34D399; padding: 6px 14px; border-radius: 9999px; font-size: 13px; font-weight: 600; }
+        .grid { display: grid; grid-template-columns: 380px 1fr; gap: 25px; }
+        .card { background: #1E293B; border-radius: 12px; border: 1px solid #334155; padding: 22px; }
+        .card h2 { font-size: 16px; margin-bottom: 18px; color: #F8FAFC; border-left: 4px solid #38BDF8; padding-left: 10px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 12px; color: #94A3B8; margin-bottom: 6px; font-weight: 600; }
+        .form-control { width: 100%; background: #0F172A; border: 1px solid #475569; border-radius: 6px; padding: 10px 12px; color: #F8FAFC; font-size: 13px; outline: none; transition: border-color 0.2s; }
+        .form-control:focus { border-color: #38BDF8; }
+        .btn-submit { width: 100%; background: #0284C7; color: white; border: none; border-radius: 6px; padding: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: background 0.2s; margin-top: 10px; }
+        .btn-submit:hover { background: #0369A1; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { background: #0F172A; color: #94A3B8; text-align: left; padding: 10px; border-bottom: 1px solid #334155; }
+        td { padding: 10px; border-bottom: 1px solid #334155; color: #CBD5E1; }
+        tr:hover { background: #26334D; }
+        .toast { position: fixed; top: 20px; right: 20px; background: #059669; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; font-size: 14px; font-weight: 600; z-index: 100; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>华盛云端政企培训管理系统 (内部政务上报门户)</h1>
+                <p style="color: #64748B; font-size: 12px; margin-top: 4px;">全国统一学员录入与资格核查服务终端 • 安全等级: 物理隔离专网</p>
+            </div>
+            <div class="badge">● 系统已接入自动化专线</div>
+        </div>
+
+        <div class="grid">
+            <!-- 录入表单区 -->
+            <div class="card">
+                <h2>学员资料录入</h2>
+                <form id="entryForm" onsubmit="handleFormSubmit(event)">
+                    <div class="form-group">
+                        <label for="student_name">学员姓名 *</label>
+                        <input type="text" id="student_name" class="form-control" placeholder="例: 张三" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="id_card">身份证号 *</label>
+                        <input type="text" id="id_card" class="form-control" placeholder="18位公民身份证号" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="phone">联系手机 *</label>
+                        <input type="text" id="phone" class="form-control" placeholder="11位手机号码" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="course_category">报读班型 *</label>
+                        <select id="course_category" class="form-control" required>
+                            <option value="人工智能与大模型算法专班">人工智能与大模型算法专班</option>
+                            <option value="企业级全栈微服务架构班">企业级全栈微服务架构班</option>
+                            <option value="商业智能数据分析实战班">商业智能数据分析实战班</option>
+                            <option value="数字化出纳与财税合规班">数字化出纳与财税合规班</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="tuition_fee">实缴学费 (元) *</label>
+                        <input type="number" id="tuition_fee" class="form-control" placeholder="例: 4800" required>
+                    </div>
+                    <button type="submit" id="btn_submit" class="btn-submit">确认核验并提交系统 (F8)</button>
+                </form>
+            </div>
+
+            <!-- 实时上报成功数据表格 -->
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2>已上报成功花名册</h2>
+                    <span id="submitted_count" style="font-size: 13px; color: #38BDF8; font-weight: bold;">当前已录入: 0 人</span>
+                </div>
+                <div style="max-height: 480px; overflow-y: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>序号</th>
+                                <th>姓名</th>
+                                <th>身份证号</th>
+                                <th>手机号</th>
+                                <th>班型</th>
+                                <th>金额</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody id="records_body">
+                            <!-- 动态注入行 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">✔ 学员信息录入成功！系统已建档。</div>
+
+    <script>
+        let count = 0;
+        function handleFormSubmit(e) {
+            e.preventDefault();
+            const name = document.getElementById("student_name").value.trim();
+            const idCard = document.getElementById("id_card").value.trim();
+            const phone = document.getElementById("phone").value.trim();
+            const course = document.getElementById("course_category").value;
+            const fee = document.getElementById("tuition_fee").value;
+
+            if(!name || !idCard) return;
+
+            count++;
+            const tbody = document.getElementById("records_body");
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>#${count}</td>
+                <td style="font-weight: 600; color: #38BDF8;">${name}</td>
+                <td>${idCard.replace(/^(.{6})(?:\d+)(.{4})$/, "$1******$2")}</td>
+                <td>${phone}</td>
+                <td>${course}</td>
+                <td>¥${fee}</td>
+                <td><span style="color: #34D399; font-weight: 600;">已归档</span></td>
+            `;
+            tbody.insertBefore(tr, tbody.firstChild);
+            document.getElementById("submitted_count").innerText = `当前已录入: ${count} 人`;
+
+            // 弹出提示
+            const toast = document.getElementById("toast");
+            toast.style.display = "block";
+            setTimeout(() => { toast.style.display = "none"; }, 1200);
+
+            // 清空表单准备下一次自动录入
+            document.getElementById("student_name").value = "";
+            document.getElementById("id_card").value = "";
+            document.getElementById("phone").value = "";
+            document.getElementById("tuition_fee").value = "";
+            document.getElementById("student_name").focus();
+        }
+    </script>
+</body>
+</html>
