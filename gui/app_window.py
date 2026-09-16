@@ -1,13 +1,13 @@
 ﻿# -*- coding: utf-8 -*-
 """
-gui/app_window.py - FlashCraft 现代暗黑美学主界面 (巅峰大厂级商业工作台)
+gui/app_window.py - FlashCraft 现代暗黑美学主界面 (终极全闭环版)
 作者: Emiliamio <mio2110767128@163.com>
 
-巅峰特性：
-1. 注入单机硬件指纹 (FC-XXXX-XXXX) 与授权防刷熔断器；
-2. 全局工业级快捷键：F5 启动、Esc 强停、F1 帮助手册、Ctrl+L 清屏；
-3. 智能屏幕正中居中、原生文件拖拽、日志一键复制、原生音效；
-4. 业务场景一键热切换与多线程防卡死。
+升级亮点：
+1. 路径自适应去花括号与引号防呆过滤；
+2. 商业授权闭环：内置 [🔑 激活卡密] 交互弹窗，支持离线卡密秒变正式版；
+3. 优雅退出钩子：拦截 WM_DELETE_WINDOW 防止进程悬挂；
+4. 3大场景无缝热切换 + F5/Esc/F1 极客热键 + 原生拖拽。
 """
 
 import os
@@ -33,7 +33,8 @@ from core.license_guard import (
     get_machine_fingerprint,
     get_trial_status,
     record_trial_usage,
-    is_officially_activated
+    is_officially_activated,
+    verify_and_activate
 )
 from tasks.demo_excel_merger import ExcelMergerWorker
 from tasks.demo_invoice_extractor import InvoiceExtractorWorker
@@ -77,7 +78,10 @@ class AppWindow(ctk.CTk):
         # 4. 绑定全局极客快捷键
         self._setup_shortcuts()
 
-        # 5. 启动后台 UI 队列消费者 (每 50ms 轮询一次)
+        # 5. 窗口关闭拦截 (防孤儿进程)
+        self.protocol("WM_DELETE_WINDOW", self._on_window_close)
+
+        # 6. 启动后台 UI 队列消费者 (每 50ms 轮询一次)
         self.after(50, self._poll_ui_queue)
 
     def _center_window(self):
@@ -87,6 +91,15 @@ class AppWindow(ctk.CTk):
         x = max(0, (sw - WINDOW_WIDTH) // 2)
         y = max(0, (sh - WINDOW_HEIGHT) // 2)
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{x}+{y}")
+
+    def _clean_path_string(self, raw_path: str) -> str:
+        """清除 Windows 拖拽可能产生的 {}、引号与空白"""
+        if not raw_path:
+            return ""
+        s = raw_path.strip().strip('"').strip("'")
+        if s.startswith("{") and s.endswith("}"):
+            s = s[1:-1].strip()
+        return s
 
     def _setup_drag_and_drop(self):
         try:
@@ -101,7 +114,7 @@ class AppWindow(ctk.CTk):
                                 break
                             except Exception:
                                 pass
-                    path_str = str(first)
+                    path_str = self._clean_path_string(str(first))
                     self.path_entry.delete(0, "end")
                     self.path_entry.insert(0, path_str)
                     self._append_console_log(f"已通过拖拽载入路径: {path_str}", "INFO")
@@ -111,15 +124,21 @@ class AppWindow(ctk.CTk):
             pass
 
     def _setup_shortcuts(self):
-        """绑定全局极客快捷键"""
         self.bind("<F5>", lambda e: self._on_start_task())
         self.bind("<Escape>", lambda e: self._on_stop_task())
         self.bind("<F1>", lambda e: self._show_help_dialog())
         self.bind("<Control-l>", lambda e: self._clear_console())
         self.bind("<Control-L>", lambda e: self._clear_console())
 
+    def _on_window_close(self):
+        """窗口关闭拦截：优雅通知子线程退出，杜绝 Edge/Chrome 残留"""
+        if self.current_worker and self.current_worker.is_running:
+            self.current_worker.request_stop()
+            self.after(200, self.destroy)
+        else:
+            self.destroy()
+
     def _show_help_dialog(self):
-        """F1 快捷键呼出用户指南弹窗"""
         guide_text = (
             "【FlashCraft 快捷键与操作指南】\n\n"
             "• [F5] 键：快速启动当前选中的自动化任务\n"
@@ -131,6 +150,27 @@ class AppWindow(ctk.CTk):
             "专属技术支持: Emiliamio <mio2110767128@163.com>"
         )
         messagebox.showinfo("FlashCraft 操作指南 (F1)", guide_text)
+
+    def _on_activate_license_dialog(self):
+        """弹出商业授权激活卡密对话框"""
+        dialog = ctk.CTkInputDialog(
+            text=f"当前本机设备指纹: {self.machine_code}\n请输入专属商业正式版激活卡密 (KEY-XXXX-XXXX-XXXX):",
+            title="商业授权卡密激活"
+        )
+        key = dialog.get_input()
+        if key and key.strip():
+            ok, msg = verify_and_activate(key)
+            if ok:
+                messagebox.showinfo("激活成功", msg)
+                self._is_trial_active = False
+                self.trial_badge.configure(
+                    text="⭐ 商业永久正式版 (已授权)",
+                    fg_color="#1A2E26",
+                    text_color=COLOR_ACCENT_GREEN
+                )
+                self._append_console_log("🎉 商业授权已成功永久激活，全量数据处理已解锁！", "SUCCESS")
+            else:
+                messagebox.showerror("激活失败", msg)
 
     def _setup_layout(self):
         self.grid_columnconfigure(0, weight=1)
@@ -189,7 +229,20 @@ class AppWindow(ctk.CTk):
             padx=10,
             pady=4
         )
-        self.trial_badge.pack(side="left", padx=(0, 10))
+        self.trial_badge.pack(side="left", padx=(0, 6))
+
+        # 激活卡密按钮
+        btn_key = ctk.CTkButton(
+            badge_box,
+            text="🔑 激活",
+            width=55,
+            height=24,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=10, weight="bold"),
+            fg_color="#047857",
+            hover_color="#065F46",
+            command=self._on_activate_license_dialog
+        )
+        btn_key.pack(side="left", padx=(0, 8))
 
         self.status_badge = ctk.CTkLabel(
             badge_box,
@@ -255,7 +308,6 @@ class AppWindow(ctk.CTk):
         self.chk_auto_open.select()
         self.chk_auto_open.pack(side="left", padx=(0, 20))
 
-        # 帮助提示标签
         hint_label = ctk.CTkLabel(opt_frame, text="💡 提示: 按 [F5] 启动 | [Esc] 停止 | [F1] 帮助", font=ctk.CTkFont(family="Consolas", size=11), text_color="#64748B")
         hint_label.pack(side="right")
 
@@ -325,14 +377,16 @@ class AppWindow(ctk.CTk):
         ftypes = [("PDF 发票文件", "*.pdf"), ("所有文件", "*.*")] if "发票" in mode else [("Excel/CSV 表格", "*.xlsx *.xls *.csv"), ("所有文件", "*.*")]
         file_path = filedialog.askopenfilename(title="选择待处理的文件", filetypes=ftypes)
         if file_path:
+            clean_p = self._clean_path_string(file_path)
             self.path_entry.delete(0, "end")
-            self.path_entry.insert(0, file_path)
+            self.path_entry.insert(0, clean_p)
 
     def _on_choose_dir(self):
         dir_path = filedialog.askdirectory(title="选择包含待处理文件的目录")
         if dir_path:
+            clean_p = self._clean_path_string(dir_path)
             self.path_entry.delete(0, "end")
-            self.path_entry.insert(0, dir_path)
+            self.path_entry.insert(0, clean_p)
 
     def _copy_console_log(self):
         logs = self.console_text.get("1.0", "end-1c")
@@ -386,7 +440,7 @@ class AppWindow(ctk.CTk):
                 f"当前单机试用配额已达上限 ({count}/{max_runs} 次)。\n"
                 f"为保护技术知识产权，已触发安全熔断。\n\n"
                 f"您的设备机器码: {self.machine_code}\n"
-                f"请联系作者 Emiliamio (mio2110767128@163.com) 结清尾款获取正式商用激活卡密！"
+                f"请联系作者 Emiliamio (mio2110767128@163.com) 获取正式商用激活卡密，或点击上方 [🔑 激活] 按钮输入卡密！"
             )
             messagebox.showwarning("商业授权受限", err_msg)
             self._append_console_log(f"🚨 试用次数已超限 ({count}/{max_runs})，运行已被安全拦截。", "ERROR")
@@ -396,7 +450,8 @@ class AppWindow(ctk.CTk):
         record_trial_usage()
 
         mode = self.mode_menu.get()
-        input_path = self.path_entry.get().strip()
+        raw_path = self.path_entry.get()
+        input_path = self._clean_path_string(raw_path)
         params = {
             "input_path": input_path,
             "remove_duplicates": bool(self.chk_dedup.get()),

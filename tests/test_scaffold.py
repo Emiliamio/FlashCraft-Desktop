@@ -85,3 +85,8 @@ def test_worker_stop_signal():
     
     with pytest.raises(InterruptedError):
         worker.check_stop_requested()
+def test_currency_cleaner_robustness():
+    from tasks.demo_excel_merger import clean_numeric_series
+    s = pd.Series(["¥1,299.50", "$88.0", "150", "(20.00)", "¥ 3,450.60 ", ""])
+    res = clean_numeric_series(s).tolist()
+    assert res == [1299.50, 88.0, 150.0, -20.0, 3450.60, 0.0]

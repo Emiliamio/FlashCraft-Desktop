@@ -1,17 +1,18 @@
 ﻿# -*- coding: utf-8 -*-
 """
-tasks/demo_excel_merger.py - [Demo 2: 电商/运营] 多平台多店铺 Excel 账单自动核对器
+tasks/demo_excel_merger.py - [Demo 2: 电商/运营] 多平台多店铺 Excel 账单自动核对器 (工业高健壮版)
 作者: Emiliamio <mio2110767128@163.com>
 
-核心能力：
-1. 智能表头模糊映射：自动兼容淘宝、京东、拼多多、抖音等不同平台的字段名；
-2. 脏数据自愈：自动剥离空格、纠正数据类型、过滤退款/售后脏订单；
-3. 核心商业算法：按商品 SKU 货号聚合，自动核算销售总额、总成本、净毛利润与毛利率；
-4. 【商业试用锁】：当 IS_TRIAL=True 时只截取前 10 行并植入水印提示；
-5. 输出多维度财务报表：标准化明细表 + SKU利润透视表 + 店铺业绩对比表。
+核心能力升级：
+1. 货币符号与千分位清洗器：解决带 ¥, $, 逗号时 pd.to_numeric 计算归零的致命暗坑；
+2. 跨平台模糊表头字典全量扩充；
+3. 多 Sheet 智能读取与退款订单多词识别；
+4. 衍生指标：总营收、总成本、净毛利、毛利率(%)；
+5. 【商业试用锁】：当 IS_TRIAL=True 时只截取前 10 行并植入水印提示。
 """
 
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -21,16 +22,35 @@ import pandas as pd
 from core.base_worker import BaseWorker
 from config import IS_TRIAL, TRIAL_ROW_LIMIT, TRIAL_WATERMARK, get_default_output_dir, resolve_mock_path
 
-# 跨平台列名模糊对齐字典
+# 跨平台列名模糊对齐字典 (扩充大淘宝/天猫/京东/拼多多/抖音/有赞常见命名)
 SCHEMA_MAPPINGS = {
-    "订单号": ["订单号", "主订单编号", "订单流水号", "订单编号", "交易流水号"],
-    "商品货号": ["商家编码", "SKU货号", "外部货号", "商品编码", "货号"],
-    "商品名称": ["宝贝标题", "商品全称", "商品名称", "商品描述", "标题"],
-    "销售金额": ["买家实付", "结算金额", "实付总额", "销售单价", "实付金额"],
-    "销售数量": ["购买数量", "订购件数", "成团数量", "数量", "销售数量"],
-    "采购成本": ["进货成本", "采购底价", "供货价", "成本", "采购单价"],
-    "订单状态": ["订单状态", "结算状态", "发货状态", "售后状态", "状态"]
+    "订单号": ["订单号", "主订单编号", "订单流水号", "订单编号", "交易流水号", "订单ID", "交易号", "流水号", "业务单号"],
+    "商品货号": ["商家编码", "SKU货号", "外部货号", "商品编码", "货号", "商品代码", "规格编码", "SKU"],
+    "商品名称": ["宝贝标题", "商品全称", "商品名称", "商品描述", "标题", "品名", "商品规格名称"],
+    "销售金额": ["买家实付", "结算金额", "实付总额", "销售单价", "实付金额", "售价", "单价", "成交价", "商品金额", "支付总额"],
+    "销售数量": ["购买数量", "订购件数", "成团数量", "数量", "销售数量", "件数", "商品数量", "数量(件)"],
+    "采购成本": ["进货成本", "采购底价", "供货价", "成本", "采购单价", "进价", "成本价", "供货单价"],
+    "订单状态": ["订单状态", "结算状态", "发货状态", "售后状态", "状态", "交易状态", "订单处理状态"]
 }
+
+def clean_numeric_series(series: pd.Series, default_val: float = 0.0) -> pd.Series:
+    """
+    清洗带有货币符号 (¥, ￥, $, €)、千分位逗号 (1,299.50) 与空白符的金额字段
+    彻底解决 pd.to_numeric 在遇到货币字符时被强制转换为 NaN 归零的致命暗坑
+    """
+    if series.empty:
+        return series
+    
+    # 统一转换为字符串清洗
+    cleaned = (
+        series.astype(str)
+        .str.replace(r"[¥￥$€\s]", "", regex=True)
+        .str.replace(",", "", regex=False)
+        .str.strip()
+    )
+    # 处理括号表示的负数 (100.00) -> -100.00
+    cleaned = cleaned.str.replace(r"^\((.+)\)$", r"-\1", regex=True)
+    return pd.to_numeric(cleaned, errors="coerce").fillna(default_val)
 
 class ExcelMergerWorker(BaseWorker):
     def __init__(self, params: Dict[str, Any]):
@@ -81,7 +101,7 @@ class ExcelMergerWorker(BaseWorker):
         p = Path(input_path)
         files: List[Path] = []
         if p.is_dir():
-            files = list(p.glob("*.xlsx")) + list(p.glob("*.xls")) + list(p.glob("*.csv"))
+            files = sorted(list(p.glob("*.xlsx")) + list(p.glob("*.xls")) + list(p.glob("*.csv")))
         elif p.is_file():
             files = [p]
 
@@ -108,22 +128,22 @@ class ExcelMergerWorker(BaseWorker):
                 self.emit_log(f"表格读取跳过: {file_path.name}, 原因: {read_err}", level="WARN")
 
             self.emit_progress(idx, total_files * 2)
-            time.sleep(0.04)
+            time.sleep(0.03)
 
         self.check_stop_requested()
         combined_df = pd.concat(all_cleaned_dfs, ignore_index=True)
         initial_count = len(combined_df)
         self.emit_log(f"跨店铺表头智能对齐汇聚完成，共聚合原始订单流水 {initial_count} 行")
 
-        # 1. 字符串多余空格清除
+        # 1. 字符串字段剥离首尾多余空格
         for col in combined_df.select_dtypes(include=["object", "string"]).columns:
             combined_df[col] = combined_df[col].astype(str).str.strip()
 
         # 2. 自动过滤退款与异常订单
-        refund_mask = combined_df["订单状态"].str.contains("退款|关闭|取消", na=False)
+        refund_mask = combined_df["订单状态"].str.contains("退款|关闭|取消|已退货|售后驳回", na=False)
         refund_count = int(refund_mask.sum())
         if refund_count > 0:
-            self.emit_log(f"智能排除退款与异常订单: 剔除 {refund_count} 行退款流水", level="INFO")
+            self.emit_log(f"智能排除退款与异常订单: 剔除 {refund_count} 行退款售后流水", level="INFO")
             combined_df = combined_df[~refund_mask].copy()
 
         # 3. 订单去重
@@ -134,22 +154,24 @@ class ExcelMergerWorker(BaseWorker):
             if dedup_diff > 0:
                 self.emit_log(f"剔除重复重复订单记录: {dedup_diff} 行", level="INFO")
 
-        # 4. 数值纠偏与利润指标计算
-        combined_df["销售金额"] = pd.to_numeric(combined_df["销售金额"], errors="coerce").fillna(0.0)
-        combined_df["销售数量"] = pd.to_numeric(combined_df["销售数量"], errors="coerce").fillna(1)
-        combined_df["采购成本"] = pd.to_numeric(combined_df["采购成本"], errors="coerce").fillna(0.0)
+        # 4. 数值深度清洗与利润指标精准计算 (防止货币符号导致 NaN 归零)
+        combined_df["销售金额"] = clean_numeric_series(combined_df["销售金额"], default_val=0.0)
+        combined_df["销售数量"] = clean_numeric_series(combined_df["销售数量"], default_val=1.0)
+        combined_df["采购成本"] = clean_numeric_series(combined_df["采购成本"], default_val=0.0)
 
         # 衍生财务指标
         combined_df["订单总营收"] = (combined_df["销售金额"] * combined_df["销售数量"]).round(2)
         combined_df["订单总成本"] = (combined_df["采购成本"] * combined_df["销售数量"]).round(2)
         combined_df["净毛利润"] = (combined_df["订单总营收"] - combined_df["订单总成本"]).round(2)
         
-        # 避免除以零
+        # 毛利率(%)，规避除以零
         combined_df["毛利率(%)"] = (
             (combined_df["净毛利润"] / combined_df["订单总营收"].replace(0, 1)) * 100
         ).round(2)
 
-        self.emit_log(f"利润核算完成：总流水营收 ¥{combined_df['订单总营收'].sum():.2f}，净毛利 ¥{combined_df['净毛利润'].sum():.2f}", level="SUCCESS")
+        total_rev = round(combined_df["订单总营收"].sum(), 2)
+        total_prof = round(combined_df["净毛利润"].sum(), 2)
+        self.emit_log(f"利润核算完成：总流水营收 ¥{total_rev:.2f}，净毛利 ¥{total_prof:.2f}", level="SUCCESS")
 
         # 5. 商业试用锁截断
         is_trial_triggered = False
@@ -199,7 +221,7 @@ class ExcelMergerWorker(BaseWorker):
             "total_raw": initial_count,
             "total_rows": initial_count,
             "valid_orders": len(combined_df),
-            "total_revenue": round(combined_df["订单总营收"].sum(), 2),
-            "total_profit": round(combined_df["净毛利润"].sum(), 2),
+            "total_revenue": total_rev,
+            "total_profit": total_prof,
             "is_trial": is_trial_triggered
         }
